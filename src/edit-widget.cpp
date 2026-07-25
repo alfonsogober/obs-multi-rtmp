@@ -175,11 +175,13 @@ class EditOutputWidgetImpl: public EditOutputWidget
         // owner of props and settings is transfered
         void UpdateProperties(obs_properties* props, obs_data* settings) {
             ResetWid();
+            // The transferred reference on settings is consumed by
+            // createPropertyWidget; settings_ and the property widget each
+            // hold their own reference, so no extra release here.
             wid_ = createPropertyWidget(props, settings_ = settings, this);
             layout_->addWidget(wid_, 0, 0, 1, 1, Qt::AlignTop);
             wid_->SetGeometryChangeCallback(onContentSizeChanged_);
             NotifyContentSizeChanged();
-            obs_data_release(settings);
         }
 
         void ClearProperties() {
@@ -261,7 +263,7 @@ class EditOutputWidgetImpl: public EditOutputWidget
             if (caps & OBS_ENCODER_CAP_DEPRECATED)
                 continue;
             auto enc_codec = obs_get_encoder_codec(encid);
-            if (strcmp(enc_codec, codec) == 0)
+            if (enc_codec && strcmp(enc_codec, codec) == 0)
                 result.emplace_back(encid);
         }
         return result;
@@ -451,6 +453,11 @@ protected:
         }
 
         auto service = obs_service_create(protocol_info->serviceId, ("tmp_service_" + targetid_).c_str(), from_json(config_->serviceParam), nullptr);
+        if (!service) {
+            blog(LOG_ERROR, TAG "Failed to create service \"%s\".", protocol_info->serviceId);
+            serviceSettings_->ClearProperties();
+            return;
+        }
         serviceSettings_->UpdateProperties(
             obs_service_properties(service),
             obs_service_get_settings(service));
@@ -467,11 +474,20 @@ protected:
         }
 
         auto output = obs_output_create(protocol_info->outputId, ("tmp_output_" + targetid_).c_str(), from_json(config_->outputParam), nullptr);
+        if (!output) {
+            blog(LOG_ERROR, TAG "Failed to create output \"%s\".", protocol_info->outputId);
+            outputSettings_->ClearProperties();
+            supported_audio_encoders_.clear();
+            supported_video_encoders_.clear();
+            return;
+        }
         outputSettings_->UpdateProperties(
             obs_output_properties(output),
             obs_output_get_settings(output));
-        supported_audio_encoders_ = obs_output_get_supported_audio_codecs(output);
-        supported_video_encoders_ = obs_output_get_supported_video_codecs(output);
+        auto audio_codecs = obs_output_get_supported_audio_codecs(output);
+        auto video_codecs = obs_output_get_supported_video_codecs(output);
+        supported_audio_encoders_ = audio_codecs ? audio_codecs : "";
+        supported_video_encoders_ = video_codecs ? video_codecs : "";
         obs_output_release(output);
 
         if (aenc_ && venc_)

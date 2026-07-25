@@ -398,13 +398,13 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
             // needs to be started by the user (i.e. start streaming or start recording)
             ReleaseOutputEncoder();
 
-            auto msgbox = new QMessageBox(QMessageBox::Icon::Critical, 
-                obs_module_text("Notice.Title"), 
+            QMessageBox msgbox(QMessageBox::Icon::Critical,
+                obs_module_text("Notice.Title"),
                 obs_module_text("Notice.GetEncoder"),
                 QMessageBox::StandardButton::Ok,
                 this
                 );
-            msgbox->exec();
+            msgbox.exec();
             return false;
         }
 
@@ -432,12 +432,17 @@ class PushWidgetImpl : public PushWidget, public IOBSOutputEventHanlder
                 obs_output_set_video_encoder(output_, nullptr);
                 obs_encoder_release(venc);
             }
-            
-            auto aenc = obs_output_get_audio_encoder(output_, 0);
-            if (aenc)
+
+            // Release every audio track encoder, not only track 0.
+            // Additional tracks are set when a VOD track is configured.
+            for (size_t track = 0; track < MAX_AUDIO_MIXES; ++track)
             {
-                obs_output_set_audio_encoder(output_, nullptr, 0);
-                obs_encoder_release(aenc);
+                auto aenc = obs_output_get_audio_encoder(output_, track);
+                if (aenc)
+                {
+                    obs_output_set_audio_encoder(output_, nullptr, track);
+                    obs_encoder_release(aenc);
+                }
             }
 
             return true;
@@ -610,6 +615,7 @@ public:
             blog(LOG_DEBUG, "Streaming to output: %s", output_id);
 
             output_ = obs_output_create(output_id, "multi-output", output_settings, nullptr);
+            obs_data_release(output_settings);
             SetMeAsHandler(output_);
         }
 
@@ -679,6 +685,9 @@ public:
    
     void OnOBSEvent(obs_frontend_event ev) override
     {
+        if (!config_)
+            return;
+
         if (ev == obs_frontend_event::OBS_FRONTEND_EVENT_EXIT
             || ev == obs_frontend_event::OBS_FRONTEND_EVENT_PROFILE_CHANGED
             || ev == obs_frontend_event::OBS_FRONTEND_EVENT_PROFILE_LIST_CHANGED
@@ -752,10 +761,20 @@ public:
         msg_->setToolTip(msg);
     }
 
+    // Queue a task onto the UI thread with this widget as context so that
+    // pending tasks are dropped if the widget is destroyed first. The output
+    // signal callbacks arrive on non-UI threads; without a context object a
+    // queued task could run after this widget was deleted (profile switch,
+    // exit, target removal) and crash.
+    void RunInUIThreadSafe(std::function<void()> task)
+    {
+        QMetaObject::invokeMethod(this, std::move(task), Qt::QueuedConnection);
+    }
+
     // obs logical
     void OnStarting() override
     {
-        GetGlobalService().RunInUIThread([this]() {
+        RunInUIThreadSafe([this]() {
             begin_time_ = clock::now();
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
@@ -767,7 +786,7 @@ public:
 
     void OnStarted() override
     {
-        GetGlobalService().RunInUIThread([this]() {
+        RunInUIThreadSafe([this]() {
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
@@ -780,7 +799,7 @@ public:
 
     void OnReconnect() override
     {
-        GetGlobalService().RunInUIThread([this]() {
+        RunInUIThreadSafe([this]() {
             timer_->stop();
 
             remove_btn_->setEnabled(false);
@@ -792,7 +811,7 @@ public:
 
     void OnReconnected() override
     {
-        GetGlobalService().RunInUIThread([this]() {
+        RunInUIThreadSafe([this]() {
             remove_btn_->setEnabled(false);
             btn_->setText(obs_module_text("Status.Stop"));
             btn_->setEnabled(true);
@@ -805,7 +824,7 @@ public:
 
     void OnStopping() override
     {
-        GetGlobalService().RunInUIThread([this]() {
+        RunInUIThreadSafe([this]() {
             timer_->stop();
 
             remove_btn_->setEnabled(false);
@@ -817,7 +836,7 @@ public:
 
     void OnStopped(int code) override
     {
-        GetGlobalService().RunInUIThread([this, code]() {
+        RunInUIThreadSafe([this, code]() {
             ResetInfo();
             timer_->stop();
 
@@ -847,10 +866,12 @@ public:
                     SetMsg(obs_module_text("Error.Unknown"));
                     break;
             }
-        });
 
-        ReleaseOutputEncoder();
-        ReleaseOutputSceneView();
+            // Tear down on the UI thread instead of the signal thread so it
+            // cannot race with StartStreaming or the widget's destructor.
+            ReleaseOutputEncoder();
+            ReleaseOutputSceneView();
+        });
     }
 };
 

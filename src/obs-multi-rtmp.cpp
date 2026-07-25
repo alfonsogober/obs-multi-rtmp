@@ -422,14 +422,14 @@ private:
         outputsContainer_->setItemWidget(listItem, pushWidget);
 
         QObject::connect(pushWidget->GetDeleteButton(), &QPushButton::clicked, [this, targetId]() {
-            auto msgbox = new QMessageBox(
+            QMessageBox msgbox(
                 QMessageBox::Icon::Question,
                 obs_module_text("Question.Title"),
                 obs_module_text("Question.Delete"),
                 QMessageBox::Yes | QMessageBox::No,
                 this
             );
-            if (msgbox->exec() != QMessageBox::Yes) {
+            if (msgbox.exec() != QMessageBox::Yes) {
                 return;
             }
             DeletePushWidget(targetId);
@@ -443,6 +443,25 @@ private:
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-multi-rtmp", "en-US")
 OBS_MODULE_AUTHOR("雷鳴 (@sorayukinoyume)")
+
+static MultiOutputWidget* s_dock = nullptr;
+
+static void OnFrontendEvent(enum obs_frontend_event event, void *private_data)
+{
+    auto dock = static_cast<MultiOutputWidget*>(private_data);
+
+    for(auto x: dock->GetAllPushWidgets())
+        x->OnOBSEvent(event);
+
+    if (event == obs_frontend_event::OBS_FRONTEND_EVENT_EXIT)
+    {
+        dock->SaveConfig();
+    }
+    else if (event == obs_frontend_event::OBS_FRONTEND_EVENT_PROFILE_CHANGED)
+    {
+        dock->LoadConfig();
+    }
+}
 
 bool obs_module_load()
 {
@@ -463,25 +482,19 @@ bool obs_module_load()
 
     blog(LOG_INFO, TAG "version: %s by SoraYuki https://github.com/sorayuki/obs-multi-rtmp/", PLUGIN_VERSION);
 
-    obs_frontend_add_event_callback(
-        [](enum obs_frontend_event event, void *private_data) {
-            auto dock = static_cast<MultiOutputWidget*>(private_data);
-
-            for(auto x: dock->GetAllPushWidgets())
-                x->OnOBSEvent(event);
-
-            if (event == obs_frontend_event::OBS_FRONTEND_EVENT_EXIT)
-            {   
-                dock->SaveConfig();
-            }
-            else if (event == obs_frontend_event::OBS_FRONTEND_EVENT_PROFILE_CHANGED)
-            {
-                dock->LoadConfig();
-            }
-        }, dock
-    );
+    s_dock = dock;
+    obs_frontend_add_event_callback(OnFrontendEvent, dock);
 
     return true;
+}
+
+void obs_module_unload()
+{
+    if (s_dock) {
+        obs_frontend_remove_event_callback(OnFrontendEvent, s_dock);
+        s_dock = nullptr;
+    }
+    s_service.uiThread_ = nullptr;
 }
 
 const char *obs_module_description(void)

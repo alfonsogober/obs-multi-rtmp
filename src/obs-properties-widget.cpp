@@ -177,6 +177,7 @@ namespace {
                                 data = LoadCString(obs_property_list_item_string(p, i));
                             cb->addItem(LoadCString(itemname), data);
                         }
+                        break;
                     }
                     default:
                         blog(LOG_WARNING, "ReloadProperty did not handle property of type %d", propType);
@@ -254,7 +255,7 @@ namespace {
             {
                 try {
                     auto val = tostdu8(static_cast<QLineEditWithEye*>(ctrl)->edit()->text());
-                    obs_data_set_int(data, name.c_str(), std::stod(val));
+                    obs_data_set_double(data, name.c_str(), std::stod(val));
                 } catch(...) {
                 }
                 break;
