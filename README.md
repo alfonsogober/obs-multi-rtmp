@@ -1,3 +1,19 @@
+# About this fork
+
+This is a fork of [sorayuki/obs-multi-rtmp](https://github.com/sorayuki/obs-multi-rtmp) with crash, thread-safety, and memory-leak fixes on top of v0.7.4, made after a full audit of the plugin source:
+
+- Fixed heap corruption in the output edit dialog (an `obs_data` reference over-release; crashed OBS when changing protocol, encoder, or shared-encoder settings).
+- Fixed a use-after-free when a stream stopped while its widget was being destroyed (profile switch, OBS exit, or target deletion) — output signal callbacks are now bound to the widget's lifetime.
+- Moved encoder/scene-view teardown off the OBS signal thread to eliminate a race with stream start.
+- Fixed null-pointer crashes when an output type is unavailable or an encoder reports no codec (likely cause of the Linux "Add new target" crash).
+- Fixed leaks: settings object leaked per stream start, audio encoders leaked on extra tracks (Twitch VOD track), message boxes leaked per dialog.
+- Fixed float encoder/service settings being silently saved as integers.
+- Registered `obs_module_unload` so the frontend event callback can't fire against a destroyed dock during shutdown.
+
+Prebuilt binaries for Windows, macOS, and Ubuntu are on the [releases page](https://github.com/alfonsogober/obs-multi-rtmp/releases). All credit for the plugin itself goes to SoraYuki — original README follows.
+
+---
+
 # [Homepage / 主页](https://sorayuki.github.io/obs-multi-rtmp)
 
 ## 为什么首页是日语？ / Why is the homepage in Japanese?
